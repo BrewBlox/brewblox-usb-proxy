@@ -31,6 +31,12 @@ COPY ./entrypoint.sh ./entrypoint.sh
 RUN <<EOF
     set -ex
 
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        socat \
+        usbutils
+    rm -rf /var/cache/apt/archives /var/lib/apt/lists
+
     python3 -m venv $VENV
     pip3 install --no-index your_package
     pip3 freeze

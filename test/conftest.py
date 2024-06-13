@@ -13,8 +13,8 @@ from fastapi import FastAPI
 from httpx import AsyncClient
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
-from your_package import app_factory, utils
-from your_package.models import ServiceConfig
+from brewblox_usb_proxy import app_factory, utils
+from brewblox_usb_proxy.models import ServiceConfig
 
 LOGGER = logging.getLogger(__name__)
 

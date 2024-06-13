@@ -3,8 +3,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import FastAPI
 
-from . import (http_example, mqtt, mqtt_publish_example,
-               mqtt_subscribe_example, utils)
+from . import connected_api, discovery, utils
 
 LOGGER = logging.getLogger(__name__)
 
@@ -43,8 +42,7 @@ async def lifespan(app: FastAPI):
     # With an AsyncExitStack, we can combine multiple context managers
     # without having to increase indentation
     async with AsyncExitStack() as stack:
-        await stack.enter_async_context(mqtt.lifespan())
-        await stack.enter_async_context(mqtt_publish_example.lifespan())
+        await stack.enter_async_context(discovery.lifespan())
         yield
 
 
@@ -59,8 +57,7 @@ def create_app() -> FastAPI:
     setup_logging(config.debug)
 
     # Call setup functions for modules
-    mqtt.setup()
-    mqtt_subscribe_example.setup()
+    discovery.setup()
 
     # Create app
     # OpenApi endpoints are set to /api/doc for backwards compatibility
@@ -70,7 +67,6 @@ def create_app() -> FastAPI:
                   redoc_url=f'{prefix}/api/redoc',
                   openapi_url=f'{prefix}/openapi.json')
 
-    # Include all endpoints declared by modules
-    app.include_router(http_example.router, prefix=prefix)
+    app.include_router(connected_api.router, prefix=prefix)
 
     return app

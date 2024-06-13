@@ -21,6 +21,13 @@ def get_config() -> ServiceConfig:  # pragma: no cover
     return ServiceConfig()
 
 
+def strex(ex: Exception):
+    """
+    Formats exception as `Exception(message)`
+    """
+    return f'{type(ex).__name__}({str(ex)})'
+
+
 @asynccontextmanager
 async def task_context(coro: Coroutine,
                        cancel_timeout=timedelta(seconds=5)

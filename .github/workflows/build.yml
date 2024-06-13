@@ -8,11 +8,11 @@ on:
   workflow_dispatch: {}
 
 env:
-  DOCKER_IMAGE: ghcr.io/you/your-package
+  DOCKER_IMAGE: ghcr.io/BrewBlox/brewblox-usb-proxy
 
 jobs:
   build:
-    if: false
+    if: github.repository_owner == 'BrewBlox'
     runs-on: ubuntu-22.04
 
     steps:
