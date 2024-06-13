@@ -38,7 +38,7 @@ RUN <<EOF
     rm -rf /var/cache/apt/archives /var/lib/apt/lists
 
     python3 -m venv $VENV
-    pip3 install --no-index your_package
+    pip3 install --no-index brewblox_usb_proxy
     pip3 freeze
     rm -rf /wheeley
 EOF
