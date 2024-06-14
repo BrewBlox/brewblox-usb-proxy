@@ -10,5 +10,8 @@
     "python.languageServer": "Pylance",
     "[python]": {
         "editor.defaultFormatter": "ms-python.autopep8"
+    },
+    "files.associations": {
+        "iostream": "cpp"
     }
 }

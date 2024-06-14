@@ -1,47 +1,75 @@
-FROM python:3.11-bookworm as base
-
-ENV PIP_EXTRA_INDEX_URL=https://www.piwheels.org/simple
-ENV PIP_FIND_LINKS=/wheeley
-ENV VENV=/app/.venv
-ENV PATH="$VENV/bin:$PATH"
-
-COPY ./dist /app/dist
-
-RUN <<EOF
-    set -ex
-
-    mkdir /wheeley
-    python3 -m venv $VENV
-    pip3 install --upgrade pip wheel setuptools
-    pip3 wheel --wheel-dir=/wheeley -r /app/dist/requirements.txt
-    pip3 wheel --wheel-dir=/wheeley /app/dist/*.tar.gz
-EOF
-
-FROM python:3.11-slim-bookworm
-EXPOSE 5000
+FROM alpine:3.20 as base
 WORKDIR /app
 
-ENV PIP_FIND_LINKS=/wheeley
-ENV VENV=/app/.venv
-ENV PATH="$VENV/bin:$PATH"
+RUN <<EOF
+    set -ex
+    apk update
+    apk add --no-cache \
+        autoconf \
+        build-base \
+        binutils \
+        cmake \
+        curl \
+        file \
+        gcc \
+        g++ \
+        git \
+        libgcc \
+        libtool \
+        linux-headers \
+        make \
+        musl-dev \
+        ninja \
+        tar \
+        unzip \
+        wget
+EOF
 
-COPY --from=base /wheeley /wheeley
-COPY ./entrypoint.sh ./entrypoint.sh
+COPY CMakeLists.txt /app/
+COPY src/* /app/src/
 
 RUN <<EOF
     set -ex
-
-    apt-get update
-    apt-get install -y --no-install-recommends \
-        socat \
-        usbutils
-    rm -rf /var/cache/apt/archives /var/lib/apt/lists
-
-    python3 -m venv $VENV
-    pip3 install --no-index brewblox_usb_proxy
-    pip3 freeze
-    rm -rf /wheeley
+    mkdir build/
+    cd build
+    cmake -G Ninja -S ..
+    ninja
 EOF
 
+FROM alpine:3.20
+EXPOSE 5000
 
-ENTRYPOINT ["bash", "./entrypoint.sh"]
+COPY --from=base /app/build/connect /app/build/discover /var/www/
+
+RUN <<EOF
+    set -ex
+    apk update
+    apk add --no-cache \
+        socat \
+        lighttpd \
+        libstdc++
+
+    rm -rf /var/cache/apk/*
+EOF
+
+COPY <<EOF /app/lighttpd.conf
+
+server.modules = (
+    "mod_access",
+    "mod_accesslog",
+    "mod_alias",
+    "mod_cgi"
+)
+server.document-root = "/var/www"
+server.pid-file      = "/run/lighttpd.pid"
+server.errorlog      = "/dev/pts/0"
+server.port          = 5000
+accesslog.filename   = "/dev/pts/0"
+url.access-deny = ("~")
+cgi.assign = ("" => "")
+alias.url = ( "/usb-proxy/" => "/var/www/" )
+
+EOF
+
+ENTRYPOINT ["/usr/sbin/lighttpd"]
+CMD ["-D", "-f", "/app/lighttpd.conf"]
