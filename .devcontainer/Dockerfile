@@ -4,6 +4,7 @@ RUN <<EOF
     set -ex
     apk update
     apk add --no-cache \
+        asio-dev \
         autoconf \
         build-base \
         binutils \

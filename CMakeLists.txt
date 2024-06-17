@@ -7,8 +7,9 @@ cmake_policy(SET CMP0076 NEW)
 
 # Declare the project
 project(usb_proxy)
-add_executable(connect src/main_connect.cpp)
-add_executable(discover src/main_discover.cpp)
+# add_executable(connect src/main_connect.cpp)
+# add_executable(discover src/main_discover.cpp)
+add_executable(usb_proxy src/main.cpp)
 
 # Get system variables
 get_filename_component(APP_ROOT
