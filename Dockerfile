@@ -54,4 +54,9 @@ RUN <<EOF
     chmod +x /app/usb_proxy
 EOF
 
+# Discovery terminates expired proxies as a side effect.
+# By periodically discovering the non-existent "health" device,
+# we both confirm that the service is healthy, and trigger this side effect.
+HEALTHCHECK CMD wget --quiet --spider --tries=1 http://127.0.0.1:5000/usb-proxy/discover/health || exit 1
+
 ENTRYPOINT ["/app/usb_proxy"]

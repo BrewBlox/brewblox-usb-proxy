@@ -8,7 +8,6 @@
 #include <map>
 #include <cerrno>
 #include <charconv>
-#include <set>
 #include <spawn.h>
 
 namespace fs = std::filesystem;
@@ -43,7 +42,7 @@ std::ostream &operator<<(std::ostream &os, const ProxyConnection &conn)
 void make_lower_case(std::string &s)
 {
     std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c)
+                   [](char c)
                    { return std::tolower(c); });
 }
 
@@ -64,7 +63,8 @@ int main()
     auto discover = [&connections](std::string desired_id)
     {
         make_lower_case(desired_id);
-        auto detected_tty = std::set<std::string>();
+        // key is tty name, value is device ID
+        auto detected_tty = std::map<std::string, std::string>();
 
         // If a socat process has ended, remove it now
         std::erase_if(connections,
@@ -72,6 +72,8 @@ int main()
                       {
                           const auto &[key, value] = item;
 
+                          // kill(pid, 0) will only confirm whether the process exists
+                          // No actual signal will be sent to the process
                           if (value.handle == 0 || kill(value.handle, 0) != 0)
                           {
                               CROW_LOG_INFO << "Discarded " << value;
@@ -130,17 +132,25 @@ int main()
 
             // Always include all detected devices
             // We will be removing connections for devices that are no longer detected
-            detected_tty.insert(tty_name);
+            detected_tty[tty_name] = usb_serial;
             CROW_LOG_DEBUG << "Detected " << tty_name << " | " << usb_serial << " | " << usb_vid << ":" << usb_pid;
 
             // Skip devices that already have a running proxy process
             auto existing = connections.find(tty_name);
             if (existing != connections.end())
             {
-                // Update device ID for connection,
-                // in case the original Spark was unplugged and replaced with another
-                existing->second.device_id = usb_serial;
-                continue;
+                // If a new device is now associated with this proxy,
+                // we want to close socat to force clients to reconnect.
+                // This prevents the connection being silently transferred to a new device.
+                if (existing->second.device_id != usb_serial)
+                {
+                    kill(existing->second.handle, SIGINT);
+                    connections.erase(existing);
+                }
+                else
+                {
+                    continue;
+                }
             }
 
             // Skip devices that don't match the URL parameter
@@ -155,7 +165,7 @@ int main()
             // We use a start port, and then bind the proxy to start port + tty index
             // If start port is 9000, then ttyACM2 is always bound to 9002
             uint16_t port = 0;
-            auto port_parse_ret = std::from_chars(tty_name.data() + 6, // "ttyACM" prefix
+            auto port_parse_ret = std::from_chars(tty_name.data() + 6, // exclude "ttyACM" prefix
                                                   tty_name.data() + tty_name.size(),
                                                   port);
 
@@ -210,11 +220,22 @@ int main()
                           return false;
                       });
 
-        // Return the device IDs of all connected devices, mapped to proxy TCP port
+        // Output is a JSON object
+        // - key is device ID
+        // - value is port number if a proxy is active and null if not
         auto doc = crow::json::wvalue(crow::json::wvalue::object());
-        for (const auto &[key, value] : connections)
+
+        // Set the device ID of all detected devices
+        for (const auto &[tty_name, device_id] : detected_tty)
         {
-            doc[value.device_id] = value.port;
+            doc[device_id] = nullptr;
+        }
+
+        // Set the device IDs of all proxied devices, mapped to proxy TCP port
+        // This will overwrite the null values set for detected devices
+        for (const auto &[tty_name, conn] : connections)
+        {
+            doc[conn.device_id] = conn.port;
         }
 
         return doc;
