@@ -36,7 +36,7 @@
     "mounts": [
         "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind", // mount the Docker socket
         "source=/etc/localtime,target=/etc/localtime,type=bind,readonly", // mount localtime
-        "source=/dev,target=/dev,type=bind", // Required for recognizing new USB devices
+        "source=/dev,target=/dev,type=bind" // Required for recognizing new USB devices
         // "source=${localWorkspaceFolder}/.devcontainer/.bash_aliases,target=/home/vscode/.bash_aliases,type=bind",
         // "source=brewblox-usb-proxy-extensions,target=/home/vscode/.vscode-server/extensions,type=volume"
     ],

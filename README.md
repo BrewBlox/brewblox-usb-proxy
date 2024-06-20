@@ -16,6 +16,7 @@ The return value is a JSON object with all detected devices.
 The key is the device ID, and the value is the associated TCP port, or `null` if no proxy is active.
 
 Example output:
+
 ```json
 {
     "30003d001947383434353030":null,
