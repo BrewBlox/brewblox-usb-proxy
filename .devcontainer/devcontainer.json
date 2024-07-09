@@ -1,0 +1,53 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/alpine
+{
+    "name": "Alpine",
+    // Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
+    "build": {
+        "dockerfile": "Dockerfile"
+    },
+    // Features to add to the dev container. More info: https://containers.dev/features.
+    // "features": {},
+    // Use 'forwardPorts' to make a list of ports inside the container available locally.
+    // "forwardPorts": [],
+    // Use 'postCreateCommand' to run commands after the container is created.
+    // "postCreateCommand": "uname -a",
+    // Configure tool-specific properties.
+    // "customizations": {},
+    // Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
+    // "remoteUser": "root"
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "shellformat.path": "/usr/local/bin/shfmt"
+            },
+            // Add the IDs of extensions you want installed when the container is created.
+            "extensions": [
+                "editorconfig.editorconfig",
+                "ms-vscode.cpptools",
+                "huizhou.githd",
+                "letmaik.git-tree-compare",
+                "GitHub.vscode-pull-request-github",
+                "twxs.cmake",
+                "ms-vscode.cmake-tools"
+            ]
+        }
+    },
+    "mounts": [
+        "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind", // mount the Docker socket
+        "source=/etc/localtime,target=/etc/localtime,type=bind,readonly", // mount localtime
+        "source=/dev,target=/dev,type=bind" // Required for recognizing new USB devices
+        // "source=${localWorkspaceFolder}/.devcontainer/.bash_aliases,target=/home/vscode/.bash_aliases,type=bind",
+        // "source=brewblox-usb-proxy-extensions,target=/home/vscode/.vscode-server/extensions,type=volume"
+    ],
+    "runArgs": [
+        "--rm",
+        "--cap-add=SYS_PTRACE", // required for attaching a C++ debugger
+        "--security-opt",
+        "seccomp=unconfined",
+        "--privileged",
+        "--network=host"
+    ],
+    "remoteUser": "vscode",
+    "features": {}
+}

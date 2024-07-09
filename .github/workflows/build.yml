@@ -8,20 +8,17 @@ on:
   workflow_dispatch: {}
 
 env:
-  DOCKER_IMAGE: ghcr.io/you/your-package
+  DOCKER_IMAGE: ghcr.io/brewblox/brewblox-usb-proxy
 
 jobs:
   build:
-    if: false
+    if: github.repository_owner == 'BrewBlox'
     runs-on: ubuntu-22.04
 
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
 
       - name: Get image metadata
         id: meta
@@ -36,21 +33,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install poetry wheel
-          poetry install
-
-      - name: Test
-        run: |
-          poetry run pytest
-          poetry run flake8
-
-      - name: Build Python dist
-        run: |
-          poetry run invoke dist
 
       - name: Build Docker image
         uses: docker/build-push-action@v5
