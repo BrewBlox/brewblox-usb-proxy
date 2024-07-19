@@ -245,5 +245,8 @@ int main()
 
     // Only use a single thread to handle requests
     // The discovery endpoint is not thread-safe
-    app.port(SERVICE_PORT).run();
+    app
+        .loglevel(crow::LogLevel::Warning)
+        .port(SERVICE_PORT)
+        .run();
 }
