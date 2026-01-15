@@ -20,11 +20,11 @@ struct ProxyConnection
     // Lower-case controller device ID
     std::string device_id = "";
 
-    // This will be "ttyACM[0-256]"
+    // This will be "ttyACM[0-255]" or "ttyUSB[0-255]"
     std::string tty_name = "";
 
     // Port is always start + tty number
-    // If start = 9000, /dev/ttyACM2 -> 9002
+    // ttyACM uses ports 9000-9255, ttyUSB uses ports 9256-9511
     uint16_t port = 0;
 
     // Process ID of the socat process
@@ -55,6 +55,37 @@ std::string read_first_line(const fs::path &path)
     return out;
 }
 
+// Supported device configurations:
+// - ttyACM + /sys/bus/usb: Particle Photon/P1 (Spark 2/3), ESP32-S3 native USB
+// (Spark 5)
+// - ttyUSB + /sys/bus/usb-serial: ESP32 with CP210x bridge (Spark 4)
+struct TtyConfig {
+  const char *prefix;
+  const char *subsystem;
+  int parent_levels;    // How many ".." to reach USB device root
+  uint16_t port_offset; // Added to PROXY_START_PORT + tty index
+};
+
+static constexpr TtyConfig TTY_CONFIGS[] = {
+    {"ttyACM", "/sys/bus/usb", 1, 0},          // ports 9000-9255
+    {"ttyUSB", "/sys/bus/usb-serial", 2, 256}, // ports 9256-9511
+};
+
+// Check if VID:PID matches a supported Spark controller
+bool is_supported_device(const std::string &vid, const std::string &pid) {
+  // Particle Photon (Spark 2): VID 2b04, PID c006
+  // Particle P1 (Spark 3): VID 2b04, PID c008
+  if (vid == "2b04" && (pid == "c006" || pid == "c008"))
+    return true;
+  // ESP32-S3 native USB (Spark 5 / dev): VID 303a, PID 1001
+  if (vid == "303a" && pid == "1001")
+    return true;
+  // ESP32 with CP210x USB-UART bridge (Spark 4): VID 10c4, PID ea60
+  if (vid == "10c4" && pid == "ea60")
+    return true;
+  return false;
+}
+
 int main()
 {
     crow::SimpleApp app;
@@ -83,126 +114,138 @@ int main()
                           return false;
                       });
 
+        // Helper lambda to process a detected USB device
+        auto process_usb_device = [&](const TtyConfig &config,
+                                      const std::string &tty_name,
+                                      const std::string &usb_vid,
+                                      const std::string &usb_pid,
+                                      const std::string &usb_serial) {
+          // Always include all detected devices
+          // We will be removing connections for devices that are no longer
+          // detected
+          detected_tty[tty_name] = usb_serial;
+          CROW_LOG_DEBUG << "Detected " << tty_name << " | " << usb_serial
+                         << " | " << usb_vid << ":" << usb_pid;
+
+          // Skip devices that already have a running proxy process
+          auto existing = connections.find(tty_name);
+          if (existing != connections.end()) {
+            // If a new device is now associated with this proxy,
+            // we want to close socat to force clients to reconnect.
+            // This prevents the connection being silently transferred to a new
+            // device.
+            if (existing->second.device_id != usb_serial) {
+              kill(existing->second.handle, SIGINT);
+              connections.erase(existing);
+            } else {
+              return;
+            }
+          }
+
+          // Skip devices that don't match the URL parameter
+          if (desired_id != "all" && desired_id != usb_serial) {
+            CROW_LOG_DEBUG << "Skipped " << tty_name;
+            return;
+          }
+
+          // Calculate port: PROXY_START_PORT + port_offset + tty_index
+          // ttyACM devices use ports 9000-9255, ttyUSB devices use ports
+          // 9256-9511
+          uint16_t tty_index = 0;
+          auto prefix_len = strlen(config.prefix);
+          auto port_parse_ret =
+              std::from_chars(tty_name.data() + prefix_len,
+                              tty_name.data() + tty_name.size(), tty_index);
+
+          if (port_parse_ret.ec != std::errc()) {
+            CROW_LOG_ERROR << "Failed to parse port from " << tty_name;
+            return;
+          }
+
+          uint16_t port = PROXY_START_PORT + config.port_offset + tty_index;
+
+          // Spawn a socat process to proxy the USB device to our chosen TCP
+          // port Services can now connect to this port as if it were a TCP
+          // connection to the Spark
+          std::string arg0 = "/usr/bin/socat";
+          std::string arg1 =
+              "tcp-listen:" + std::to_string(port) + ",reuseaddr,fork";
+          std::string arg2 = "file:/dev/" + tty_name + ",raw,echo=0,b115200";
+          std::array<char *, 4> command{arg0.data(), arg1.data(), arg2.data(),
+                                        nullptr};
+          pid_t handle = 0;
+
+          int spawn_ret = posix_spawn(&handle, arg0.c_str(), nullptr, nullptr,
+                                      command.data(), environ);
+          if (spawn_ret != 0) {
+            CROW_LOG_ERROR << "Failed to spawn: " << arg0 << " " << arg1 << " "
+                           << arg2;
+            return;
+          }
+
+          auto conn = ProxyConnection{
+              .device_id = usb_serial,
+              .tty_name = tty_name,
+              .port = port,
+              .handle = handle,
+          };
+
+          CROW_LOG_INFO << "Started " << conn;
+          connections.emplace(tty_name, std::move(conn));
+        };
+
         // Iterate over all tty devices to detect valid USB devices
-        for (const auto &entry : fs::directory_iterator{"/sys/class/tty"})
-        {
-            auto err = std::error_code{};
+        for (const auto &entry : fs::directory_iterator{"/sys/class/tty"}) {
+          auto err = std::error_code{};
+          auto tty_name = entry.path().filename().string();
 
-            // We're only interested in ACM devices
-            if (!std::string(entry.path().filename()).starts_with("ttyACM"))
-            {
-                continue;
+          // Find matching tty config
+          const TtyConfig *config = nullptr;
+          for (const auto &cfg : TTY_CONFIGS) {
+            if (tty_name.starts_with(cfg.prefix)) {
+              config = &cfg;
+              break;
             }
+          }
 
-            auto subsystem_link = entry.path() / "device" / "subsystem";
-            auto subsystem_path = subsystem_link.parent_path() / fs::read_symlink(subsystem_link, err);
+          if (!config) {
+            continue;
+          }
 
-            // We only want USB devices
-            if (subsystem_path.empty() || fs::canonical(subsystem_path) != fs::path("/sys/bus/usb"))
-            {
-                CROW_LOG_DEBUG << subsystem_path << " != /sys/bus/usb";
-                continue;
-            }
+          auto subsystem_link = entry.path() / "device" / "subsystem";
+          auto subsystem_path = subsystem_link.parent_path() /
+                                fs::read_symlink(subsystem_link, err);
 
-            auto device_link = entry.path() / "device";
-            auto device_path = device_link.parent_path() / fs::read_symlink(device_link, err);
+          if (subsystem_path.empty() ||
+              fs::canonical(subsystem_path) != fs::path(config->subsystem)) {
+            CROW_LOG_DEBUG << subsystem_path << " != " << config->subsystem;
+            continue;
+          }
 
-            if (device_path.empty())
-            {
-                CROW_LOG_DEBUG << device_link << " can't be resolved";
-                continue;
-            }
+          auto device_link = entry.path() / "device";
+          auto device_path =
+              device_link.parent_path() / fs::read_symlink(device_link, err);
 
-            auto tty_name = entry.path().filename().string();
-            auto usb_vid = read_first_line(device_path / ".." / "idVendor");
-            auto usb_pid = read_first_line(device_path / ".." / "idProduct");
-            auto usb_serial = read_first_line(device_path / ".." / "serial");
+          if (device_path.empty()) {
+            CROW_LOG_DEBUG << device_link << " can't be resolved";
+            continue;
+          }
 
-            // We only want the Particle-made Sparks
-            if (usb_vid != "2b04")
-            {
-                continue;
-            }
+          // Navigate to USB device root (different depth for ttyACM vs ttyUSB)
+          auto usb_root = device_path;
+          for (int i = 0; i < config->parent_levels; ++i) {
+            usb_root = usb_root / "..";
+          }
 
-            // We only want the Photon (Spark 2) or P1 (Spark 3)
-            if (usb_pid != "c006" && usb_pid != "c008")
-            {
-                continue;
-            }
+          auto usb_vid = read_first_line(usb_root / "idVendor");
+          auto usb_pid = read_first_line(usb_root / "idProduct");
+          auto usb_serial = read_first_line(usb_root / "serial");
 
-            // Always include all detected devices
-            // We will be removing connections for devices that are no longer detected
-            detected_tty[tty_name] = usb_serial;
-            CROW_LOG_DEBUG << "Detected " << tty_name << " | " << usb_serial << " | " << usb_vid << ":" << usb_pid;
+          if (!is_supported_device(usb_vid, usb_pid)) {
+            continue;
+          }
 
-            // Skip devices that already have a running proxy process
-            auto existing = connections.find(tty_name);
-            if (existing != connections.end())
-            {
-                // If a new device is now associated with this proxy,
-                // we want to close socat to force clients to reconnect.
-                // This prevents the connection being silently transferred to a new device.
-                if (existing->second.device_id != usb_serial)
-                {
-                    kill(existing->second.handle, SIGINT);
-                    connections.erase(existing);
-                }
-                else
-                {
-                    continue;
-                }
-            }
-
-            // Skip devices that don't match the URL parameter
-            if (desired_id != "all" && desired_id != usb_serial)
-            {
-                CROW_LOG_DEBUG << "Skipped " << tty_name;
-                continue;
-            }
-
-            // We want to use a deterministic port for each tty device
-            // Linux only supports 256 ttyACM devices
-            // We use a start port, and then bind the proxy to start port + tty index
-            // If start port is 9000, then ttyACM2 is always bound to 9002
-            uint16_t port = 0;
-            auto port_parse_ret = std::from_chars(tty_name.data() + 6, // exclude "ttyACM" prefix
-                                                  tty_name.data() + tty_name.size(),
-                                                  port);
-
-            if (port_parse_ret.ec == std::errc())
-            {
-                port += PROXY_START_PORT;
-            }
-            else
-            {
-                CROW_LOG_ERROR << "Failed to parse port from " << tty_name;
-                continue;
-            }
-
-            // Spawn a socat process to proxy the USB device to our chosen TCP port
-            // Services can now connect to this port as if it were a TCP connection to the Spark
-            std::string arg0 = "/usr/bin/socat";
-            std::string arg1 = "tcp-listen:" + std::to_string(port) + ",reuseaddr,fork";
-            std::string arg2 = "file:/dev/" + tty_name + ",raw,echo=0,b115200";
-            std::array<char *, 4> command{arg0.data(), arg1.data(), arg2.data(), nullptr};
-            pid_t handle = 0;
-
-            int spawn_ret = posix_spawn(&handle, arg0.c_str(), nullptr, nullptr, command.data(), environ);
-            if (spawn_ret != 0)
-            {
-                CROW_LOG_ERROR << "Failed to spawn: " << arg0 << " " << arg1 << " " << arg2;
-                continue;
-            }
-
-            auto conn = ProxyConnection{
-                .device_id = usb_serial,
-                .tty_name = tty_name,
-                .port = port,
-                .handle = handle,
-            };
-
-            CROW_LOG_INFO << "Started " << conn;
-            connections.emplace(tty_name, std::move(conn));
+          process_usb_device(*config, tty_name, usb_vid, usb_pid, usb_serial);
         }
 
         // socat does not automatically terminate if the USB device is disconnected

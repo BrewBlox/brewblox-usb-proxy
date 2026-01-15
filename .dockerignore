@@ -1,2 +1,17 @@
 .venv/
 .vscode/
+.git/
+.github/
+.devcontainer/
+.editorconfig
+.gitignore
+
+# Python test files
+find_spark_*.py
+
+# Build scripts (not needed in image)
+*.sh
+
+# Documentation
+README.md
+LICENSE
