@@ -9,6 +9,7 @@
 #include <cerrno>
 #include <charconv>
 #include <spawn.h>
+#include <sys/wait.h>
 
 namespace fs = std::filesystem;
 
@@ -96,6 +97,16 @@ int main()
         make_lower_case(desired_id);
         // key is tty name, value is device ID
         auto detected_tty = std::map<std::string, std::string>();
+
+        // Reap exited socat processes before the liveness check below.
+        // posix_spawn'ed children linger in the process table as zombies
+        // until they are waited for, and kill(pid, 0) succeeds for a zombie.
+        // Without this, a socat that died while its tty stayed present is
+        // never detected: the entry survives, its port keeps being reported
+        // as available, and no replacement is ever spawned.
+        while (waitpid(-1, nullptr, WNOHANG) > 0)
+        {
+        }
 
         // If a socat process has ended, remove it now
         std::erase_if(connections,
