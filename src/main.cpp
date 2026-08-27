@@ -164,6 +164,15 @@ int main()
 
           uint16_t port = PROXY_START_PORT + config.port_offset + tty_index;
 
+          // Verify the device node exists before spawning socat
+          // The sysfs entry may be present while /dev/ node is not
+          // (e.g. udev delay, or device not mapped into container)
+          auto dev_path = fs::path("/dev") / tty_name;
+          if (!fs::exists(dev_path)) {
+            CROW_LOG_WARNING << dev_path << " not found, skipping";
+            return;
+          }
+
           // Spawn a socat process to proxy the USB device to our chosen TCP
           // port Services can now connect to this port as if it were a TCP
           // connection to the Spark
