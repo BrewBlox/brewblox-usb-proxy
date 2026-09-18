@@ -98,17 +98,37 @@ int main()
         // key is tty name, value is device ID
         auto detected_tty = std::map<std::string, std::string>();
 
-        // Reap exited socat processes before the liveness check below.
-        // posix_spawn'ed children linger in the process table as zombies
-        // until they are waited for, and kill(pid, 0) succeeds for a zombie.
-        // Without this, a socat that died while its tty stayed present is
-        // never detected: the entry survives, its port keeps being reported
-        // as available, and no replacement is ever spawned.
-        while (waitpid(-1, nullptr, WNOHANG) > 0)
+        // Reap exited children and drop the proxies they belonged to.
+        // posix_spawn'ed socat processes linger in the process table as
+        // zombies until they are waited for. Without this, a socat that died
+        // while its tty stayed present is never detected: the entry survives,
+        // its port keeps being reported as available, and no replacement is
+        // ever spawned.
+        //
+        // This must reap with -1, not per tracked pid: usb_proxy is PID 1 in
+        // the container, so the connection handlers that socat forks are
+        // reparented to it when their socat parent is killed, and become its
+        // zombies too. Reaped pids that match no entry are those orphans.
+        //
+        // WNOHANG never blocks, and each iteration reaps one distinct
+        // process, so the loop is bounded by the number of exited children.
+        pid_t exited = 0;
+        while ((exited = waitpid(-1, nullptr, WNOHANG)) > 0)
         {
+            std::erase_if(connections,
+                          [exited](const auto &item)
+                          {
+                              const auto &[key, value] = item;
+                              if (value.handle == exited)
+                              {
+                                  CROW_LOG_INFO << "Reaped " << value;
+                                  return true;
+                              }
+                              return false;
+                          });
         }
 
-        // If a socat process has ended, remove it now
+        // Backstop for a socat that is gone without having been reaped here
         std::erase_if(connections,
                       [](const auto &item)
                       {
