@@ -9,6 +9,7 @@
 #include <cerrno>
 #include <charconv>
 #include <spawn.h>
+#include <sys/wait.h>
 
 namespace fs = std::filesystem;
 
@@ -97,7 +98,37 @@ int main()
         // key is tty name, value is device ID
         auto detected_tty = std::map<std::string, std::string>();
 
-        // If a socat process has ended, remove it now
+        // Reap exited children and drop the proxies they belonged to.
+        // posix_spawn'ed socat processes linger in the process table as
+        // zombies until they are waited for. Without this, a socat that died
+        // while its tty stayed present is never detected: the entry survives,
+        // its port keeps being reported as available, and no replacement is
+        // ever spawned.
+        //
+        // This must reap with -1, not per tracked pid: usb_proxy is PID 1 in
+        // the container, so the connection handlers that socat forks are
+        // reparented to it when their socat parent is killed, and become its
+        // zombies too. Reaped pids that match no entry are those orphans.
+        //
+        // WNOHANG never blocks, and each iteration reaps one distinct
+        // process, so the loop is bounded by the number of exited children.
+        pid_t exited = 0;
+        while ((exited = waitpid(-1, nullptr, WNOHANG)) > 0)
+        {
+            std::erase_if(connections,
+                          [exited](const auto &item)
+                          {
+                              const auto &[key, value] = item;
+                              if (value.handle == exited)
+                              {
+                                  CROW_LOG_INFO << "Reaped " << value;
+                                  return true;
+                              }
+                              return false;
+                          });
+        }
+
+        // Backstop for a socat that is gone without having been reaped here
         std::erase_if(connections,
                       [](const auto &item)
                       {
@@ -163,6 +194,15 @@ int main()
           }
 
           uint16_t port = PROXY_START_PORT + config.port_offset + tty_index;
+
+          // Verify the device node exists before spawning socat
+          // The sysfs entry may be present while /dev/ node is not
+          // (e.g. udev delay, or device not mapped into container)
+          auto dev_path = fs::path("/dev") / tty_name;
+          if (!fs::exists(dev_path)) {
+            CROW_LOG_WARNING << dev_path << " not found, skipping";
+            return;
+          }
 
           // Spawn a socat process to proxy the USB device to our chosen TCP
           // port Services can now connect to this port as if it were a TCP
