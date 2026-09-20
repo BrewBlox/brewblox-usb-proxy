@@ -207,10 +207,16 @@ int main()
           // Spawn a socat process to proxy the USB device to our chosen TCP
           // port Services can now connect to this port as if it were a TCP
           // connection to the Spark
+          //
+          // The baud rate only matters for the Spark 4's USB-UART bridge,
+          // which the firmware switches to 921600 during application start;
+          // the boot log before that arrives at 115200 and is discarded by
+          // the service as pre-handshake noise. CDC devices (Spark 2/3,
+          // ESP32-S3 native USB) ignore the setting.
           std::string arg0 = "/usr/bin/socat";
           std::string arg1 =
               "tcp-listen:" + std::to_string(port) + ",reuseaddr,fork";
-          std::string arg2 = "file:/dev/" + tty_name + ",raw,echo=0,b115200";
+          std::string arg2 = "file:/dev/" + tty_name + ",raw,echo=0,b921600";
           std::array<char *, 4> command{arg0.data(), arg1.data(), arg2.data(),
                                         nullptr};
           pid_t handle = 0;
