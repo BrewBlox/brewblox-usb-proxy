@@ -20,5 +20,5 @@ for tty in glob('/sys/class/tty/ttyUSB*'):
 
     # To listen to the serial port, use the below code
     # if usb_vid == '10c4' and usb_pid == 'ea60':
-    #     run(['sudo', '/usr/bin/socat', '-u', f'file:/dev/{tty.name},raw,echo=0,b115200', '-'])
+    #     run(['sudo', '/usr/bin/socat', '-u', f'file:/dev/{tty.name},raw,echo=0,b921600', '-'])
     #     break
